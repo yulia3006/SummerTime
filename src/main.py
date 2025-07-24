@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 import threading
+import time
 
 
 class LidarApp:
@@ -56,39 +57,55 @@ class LidarApp:
         )
         self.page.update()
 
-    def start_scan(self, e):
-        self.scanning = True
-        self.angles = []
-        self.distances = []
-        self.btn_start.disabled = True
-        self.btn_stop.disabled = False
-        self.progress_bar.visible = True
-        self.status_text.value = "Сканирование... Порт: COM4"
-        self.status_text.color = "blue"
+    def update_buttons_state(self):
+        self.btn_start.disabled = self.scanning
+        self.btn_stop.disabled = not self.scanning
+        self.progress_bar.visible = self.scanning
         self.page.update()
 
-        threading.Thread(target=self.read_serial_data, daemon=True).start()
+    def start_scan(self, e):
+        if not self.scanning:
+            self.scanning = True
+            self.angles = []
+            self.distances = []
+            self.status_text.value = "Сканирование... Порт: COM4"
+            self.status_text.color = "blue"
+            self.update_buttons_state()
+
+            # Отправка команды RESET перед START для сброса состояния Arduino
+            if self.serial_conn and self.serial_conn.is_open:
+                self.serial_conn.write(b'RESET\n')
+                self.serial_conn.flush()
+
+            threading.Thread(target=self.read_serial_data, daemon=True).start()
 
     def stop_scan(self, e):
         self.scanning = False
         if self.serial_conn and self.serial_conn.is_open:
             try:
-                self.serial_conn.close()
-            except:
-                pass
-        self.btn_start.disabled = False
-        self.btn_stop.disabled = True
-        self.progress_bar.visible = False
+                self.serial_conn.write(b'STOP\n')
+                self.serial_conn.flush()
+            except Exception as e:
+                print(f"Ошибка при отправке STOP: {e}")
+
         self.status_text.value = "Сканирование остановлено. Порт: COM4"
         self.status_text.color = "orange"
-        self.page.update()
+        self.update_buttons_state()
 
     def read_serial_data(self):
         try:
             self.serial_conn = serial.Serial('COM4', baudrate=9600, timeout=2)
-            self.serial_conn.write(b'START\n')
 
-            while self.scanning:
+            # Сначала сбрасываем состояние
+            self.serial_conn.write(b'RESET\n')
+            self.serial_conn.flush()
+            time.sleep(0.1)
+
+            # Затем отправляем команду START
+            self.serial_conn.write(b'START\n')
+            self.serial_conn.flush()
+
+            while self.scanning and self.serial_conn.is_open:
                 if self.serial_conn.in_waiting > 0:
                     # Читаем две строки подряд
                     line1 = self.serial_conn.readline().decode('utf-8').strip()
@@ -144,7 +161,7 @@ class LidarApp:
             if len(x) > 2:
                 plt.plot([x[-1], x[0]], [y[-1], y[0]], 'b-', alpha=0.3)
 
-            plt.colorbar(label='Угол (градусы)')
+            plt.colorbar(label='Угол')
             plt.xlabel("X (см)")
             plt.ylabel("Y (см)")
             plt.title("Лазерное сканирование (окружность)")
